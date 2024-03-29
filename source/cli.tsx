@@ -10,6 +10,58 @@ const wordSeparators = [' ', '-', '_', '.'];
 const defaultFilesCount = 2;
 const lineOverhead = defaultFilesCount + 4;
 
+function init() {
+    if (fs.existsSync(outputPath)) {
+        fs.rmSync(outputPath);
+    }
+
+    // TODO isDirectory and chdir as custom functions
+    if (process.argv[2] && isDirectory(process.argv[2])) {
+        changeDirectory(process.argv[2]);
+    }
+
+    spawnAlternateTerminalScreen();
+}
+
+/** System functions */
+function isDirectory(path: string) {
+    return fs.lstatSync(path).isDirectory();
+}
+
+function changeDirectory(path: string) {
+    if (isDirectory(path)) {
+        process.chdir(path);
+    }
+}
+
+function getCwd() {
+    return process.cwd();
+}
+
+function attachResizeListener(setSize: Function) {
+    function onResize() {
+        setSize({
+            columns: process.stdout.columns,
+            rows: process.stdout.rows,
+        });
+    }
+
+    process.stdout.on('resize', onResize);
+    return () => {
+        process.stdout.off('resize', onResize);
+    };
+}
+
+function spawnAlternateTerminalScreen() {
+    const enterAltScreenCommand = '\x1b[?1049h';
+    const leaveAltScreenCommand = '\x1b[?1049l';
+    process.stdout.write(enterAltScreenCommand);
+    process.on('exit', () => {
+        process.stdout.write(leaveAltScreenCommand);
+    });
+}
+
+/** Utility functions */
 function clipNumber(current: number, min: number, max: number) {
     return Math.min(Math.max(current, min), max);
 }
@@ -20,44 +72,18 @@ function sanitizeSearchString(input: string) {
     return wordSeparators.reduce((acc, sep) => acc.replaceAll(sep, ''), initialInput);
 }
 
-function getFilesStartSliceIndex(selected: number, filesLength: number, listHeight: number) {
-    const halfList = listHeight / 2;
+function getScrollAmount(selectedValue: number, itemCount: number, itemsPerScreen: number) {
+    const halfItemsPerScreen = itemsPerScreen / 2;
 
-    const startIndex = selected - halfList - Math.max(0, selected + halfList - filesLength);
+    const scrollAmount = selectedValue - halfItemsPerScreen;
 
-    return clipNumber(startIndex, 0, filesLength);
+    return Math.max(scrollAmount, 0); //itemCount - itemsPerScreen
 }
 
-function getFilesEndSliceIndex(selected: number, filesLength: number, listHeight: number) {
-    const halfList = listHeight / 2;
-
-    const endIndex = selected + halfList - Math.min(0, selected - halfList);
-
-    return clipNumber(endIndex, 0, filesLength);
-}
-
-function useSelect({ initial = 0 }: { initial?: number }) {
-    const [selected, setSelected] = useState(initial);
-
-    const moveUp = () => {
-        setSelected((current) => Math.max(0, current - 1));
-    };
-    const moveDown = () => {
-        setSelected((current) => Math.max(0, current + 1));
-    };
-
-    return {
-        selected,
-        setSelected,
-        moveUp,
-        moveDown,
-    };
-}
-
-function getFiles(rootPath: string): FileInList[] {
-    return fs.readdirSync(rootPath).map((file, index) => ({
+function getFiles(path: string = '.'): FileInList[] {
+    return fs.readdirSync(path).map((file, index) => ({
         name: file,
-        isDirectory: fs.lstatSync(file).isDirectory(),
+        isDirectory: isDirectory(file),
         index: index,
     }));
 }
@@ -65,7 +91,7 @@ function getFiles(rootPath: string): FileInList[] {
 function cdToCurrentPathAndExit(exit: () => void) {
     const fd = fs.openSync(outputPath, fs.constants.O_WRONLY | fs.constants.O_CREAT);
 
-    fs.writeFileSync(fd, `${process.cwd()}`);
+    fs.writeFileSync(fd, `${getCwd()}`);
     fs.closeSync(fd);
 
     exit();
@@ -74,8 +100,8 @@ function cdToCurrentPathAndExit(exit: () => void) {
 function cdToSelectedPathAndExit(files: FileInList[], selected: number, exit: () => void) {
     const selectedFilePath = getSelectedFilePath(files, selected);
 
-    if (fs.lstatSync(selectedFilePath).isDirectory()) {
-        process.chdir(selectedFilePath);
+    if (isDirectory(selectedFilePath)) {
+        changeDirectory(selectedFilePath);
         cdToCurrentPathAndExit(exit);
     }
 }
@@ -84,31 +110,31 @@ function getSelectedFilePath(files: FileInList[], selected: number) {
     return files[selected]?.name as string;
 }
 
-function getFilteredFiles(files: FileInList[], searchString: string, hiddenVisible: boolean) {
-    return files
+function getNewShownFiles(files: FileInList[], searchString: string, showHiddenFiles: boolean) {
+    const sortAndMapFiles = (files: FileInList[], indexOffset: number) =>
+        files
+            .sort((a, b) => (a.name < b.name ? -1 : 1))
+            .map((file, index) => ({
+                ...file,
+                index: index + indexOffset,
+            }));
+
+    const filteredFiles = files
         .filter((file) =>
             // TODO fuzzy search
             sanitizeSearchString(file.name).includes(sanitizeSearchString(searchString)),
         )
-        .filter((file) => (hiddenVisible ? true : !file.name.startsWith('.')));
-}
+        .filter((file) => (showHiddenFiles ? true : !file.name.startsWith('.')));
 
-function getDisplayFiles(filteredFiles: FileInList[]) {
-    const directories = filteredFiles
-        .filter((file) => file.isDirectory)
-        .sort((a, b) => (a.name < b.name ? -1 : 1))
-        .map((file, index) => ({
-            ...file,
-            index: index + defaultFilesCount,
-        }));
+    const directories = sortAndMapFiles(
+        filteredFiles.filter((file) => file.isDirectory),
+        defaultFilesCount,
+    );
 
-    const nonDirectories = filteredFiles
-        .filter((file) => !file.isDirectory)
-        .sort((a, b) => (a.name < b.name ? -1 : 1))
-        .map((file, index) => ({
-            ...file,
-            index: index + defaultFilesCount + directories.length,
-        }));
+    const nonDirectories = sortAndMapFiles(
+        filteredFiles.filter((file) => !file.isDirectory),
+        defaultFilesCount + directories.length,
+    );
 
     const newDisplayedFiles = [
         { name: '.', isDirectory: true, index: 0 },
@@ -120,122 +146,160 @@ function getDisplayFiles(filteredFiles: FileInList[]) {
     return newDisplayedFiles;
 }
 
+function getNewSearchString(
+    searchString: string,
+    input: string,
+    isDeleteButton: boolean,
+    isDeleteWord: boolean,
+) {
+    if (!isDeleteButton) {
+        return searchString + input;
+    }
+
+    if (!isDeleteWord) {
+        return searchString.substring(0, searchString.length - 1);
+    }
+
+    const endIndex = Math.max(...wordSeparators.map((sep) => searchString.lastIndexOf(sep)));
+    return searchString.substring(0, endIndex);
+}
+
+/** Hooks */
+
+function useSelect(initial: number, maxValueInclusive: boolean = false) {
+    const [selectedValue, _setSelectedValue] = useState(initial);
+
+    const maxValueOffset = maxValueInclusive ? 0 : 1;
+
+    const decreaseSelectedValue = (minValue: number) => {
+        setSelectedValue((current) => current - 1, minValue, Number.MAX_VALUE);
+    };
+
+    const increaseSelectedValue = (maxValue: number) => {
+        setSelectedValue((current) => current + 1, -Number.MAX_VALUE, maxValue);
+    };
+
+    const setSelectedValue = (
+        callback: (current: number) => number,
+        minValue: number,
+        maxValue: number,
+    ) => {
+        _setSelectedValue((current) =>
+            clipNumber(callback(current), minValue, maxValue - maxValueOffset),
+        );
+    };
+
+    const clipSelectedValueToSafeRange = (minValue: number, maxValue: number) => {
+        _setSelectedValue((current) => clipNumber(current, minValue, maxValue - maxValueOffset));
+    };
+
+    return {
+        selectedValue,
+        setSelectedValue,
+        unsafeSetSelectedValue: _setSelectedValue,
+        clipSelectedValueToSafeRange,
+        decreaseSelectedValue,
+        increaseSelectedValue,
+    };
+}
+
 const CRRR = function () {
     const { exit } = useApp();
 
-    const pathRef = useRef(process.cwd());
-
-    const [hiddenVisible, setHiddenVisible] = useState(false);
+    const [showHiddenFiles, setShowHiddenFiles] = useState(false);
     const [searchString, setSearchString] = useState('');
-    const [filesInDir, setFilesInDir] = useState(getFiles('.'));
-    const [filteredFiles, setFilteredFiles] = useState(getFilteredFiles(getFiles('.'), '', false));
-    const [displayFiles, setDisplayedFiles] = useState(
-        getDisplayFiles(getFilteredFiles(getFiles('.'), '', false)),
-    );
+    const [filesInCurrenDir, setFilesCurrentInDir] = useState(getFiles());
+    const [shownFiles, setShownFiles] = useState(getNewShownFiles(getFiles(), '', false));
+    const {
+        selectedValue,
+        setSelectedValue,
+        unsafeSetSelectedValue,
+        clipSelectedValueToSafeRange,
+        decreaseSelectedValue,
+        increaseSelectedValue,
+    } = useSelect(1, false);
 
-    const { selected, setSelected, moveUp, moveDown } = useSelect({
-        initial: 1,
-    });
-
-    const [size, setSize] = useState({
+    const [screenSize, setScreenSize] = useState({
         columns: process.stdout.columns,
         rows: process.stdout.rows,
     });
 
+    function handleChangeShowHiddenFiles() {
+        const newShowHiddenFiles = !showHiddenFiles;
+        const newShownFiles = getNewShownFiles(filesInCurrenDir, searchString, newShowHiddenFiles);
+
+        setShowHiddenFiles(() => newShowHiddenFiles);
+        setShownFiles(() => newShownFiles);
+        setSelectedValue((current) => current, 0, newShownFiles.length);
+    }
+
     function handleReturn() {
-        const selectedFilePath = getSelectedFilePath(displayFiles, selected);
+        const selectedFilePath = getSelectedFilePath(shownFiles, selectedValue);
 
-        if (selectedFilePath === '.') {
+        if (selectedValue === 0) {
             cdToCurrentPathAndExit(exit);
-        }
-
-        if (fs.lstatSync(selectedFilePath).isDirectory()) {
-            process.chdir(selectedFilePath);
-            setFilesInDir(() => getFiles('.'));
-        }
-    }
-
-    function handleChangeHiddenVisible() {
-        setHiddenVisible((current) => !current);
-    }
-
-    function handleInput(input: string, key: Key) {
-        if (key.backspace || key.delete) {
-            if (key.meta) {
-                const endIndex = Math.max(
-                    ...wordSeparators.map((sep) => searchString.lastIndexOf(sep)),
-                );
-                const endIndexTrimmed = Math.max(endIndex, 0);
-                setSearchString((current) => current.substring(0, endIndexTrimmed));
-            } else {
-                setSearchString((current) => current.substring(0, current.length - 1));
-            }
-
             return;
         }
 
-        setSearchString((current) => current + input);
+        if (!isDirectory(selectedFilePath)) return;
+
+        changeDirectory(selectedFilePath);
+        const newFilesInCurrentDir = getFiles();
+        const newShownFiles = getNewShownFiles(newFilesInCurrentDir, '', showHiddenFiles);
+
+        setFilesCurrentInDir(() => newFilesInCurrentDir);
+        setShownFiles(() => newShownFiles);
+        setSelectedValue(() => 1, 0, newShownFiles.length);
+        setSearchString(() => '');
     }
 
-    /**
-     * Filter files based on hiddenVisible and searchString
-     * Also modifies selected
-     */
-    useEffect(() => {
-        setFilteredFiles(() => getFilteredFiles(filesInDir, searchString, hiddenVisible));
-
-        if (pathRef.current === process.cwd()) {
-            if (searchString === '..') {
-                setSelected(() => 1);
-            } else if (searchString.length > 0 && selected < defaultFilesCount) {
-                setSelected(() => defaultFilesCount);
-            }
-        } else {
-            setSelected(1);
-            setSearchString('');
+    function handleMoveUp(jumpToTop: boolean) {
+        if (jumpToTop) {
+            unsafeSetSelectedValue(() => 1);
+            return;
         }
 
-        pathRef.current = process.cwd();
-    }, [filesInDir, searchString, hiddenVisible]);
+        decreaseSelectedValue(0);
+    }
 
-    /**
-     * Clip selected into safe range
-     */
-    useEffect(() => {
-        if (selected < 0) setSelected(() => 0);
-        if (selected > displayFiles.length - 1) setSelected(() => displayFiles.length - 1);
-    }, [selected]);
+    function handleMoveDown(jumpToBottom: boolean) {
+        if (jumpToBottom) {
+            unsafeSetSelectedValue(() => shownFiles.length - 1);
+            return;
+        }
 
-    /**
-     * Set displayed files and clip selected to safe range
-     */
-    useEffect(() => {
-        const newDisplayedFiles = getDisplayFiles(filteredFiles);
+        increaseSelectedValue(shownFiles.length);
+    }
 
-        setSelected((current) => clipNumber(current, 0, newDisplayedFiles.length - 1));
-        setDisplayedFiles(() => newDisplayedFiles);
-    }, [filteredFiles]);
+    function handleInput(input: string, key: Key) {
+        const newSearchString = getNewSearchString(
+            searchString,
+            input,
+            key.backspace || key.delete,
+            key.meta,
+        );
+        const newShownFiles = getNewShownFiles(filesInCurrenDir, newSearchString, showHiddenFiles);
+
+        setShownFiles(() => newShownFiles);
+        setSearchString(() => newSearchString);
+        if (newSearchString === '..') {
+            unsafeSetSelectedValue(() => 1);
+        } else {
+            // TODO remember previous selected
+            clipSelectedValueToSafeRange(defaultFilesCount, newShownFiles.length);
+        }
+    }
 
     /**
      * Resize callback
      */
     useEffect(() => {
-        function onResize() {
-            setSize({
-                columns: process.stdout.columns,
-                rows: process.stdout.rows,
-            });
-        }
-
-        process.stdout.on('resize', onResize);
-        return () => {
-            process.stdout.off('resize', onResize);
-        };
+        attachResizeListener(setScreenSize);
     }, []);
 
     useInput((input, key) => {
         if (input === '>') {
-            cdToSelectedPathAndExit(displayFiles, selected, exit);
+            cdToSelectedPathAndExit(shownFiles, selectedValue, exit);
             return;
         }
 
@@ -245,7 +309,7 @@ const CRRR = function () {
         }
 
         if (input === '?') {
-            handleChangeHiddenVisible();
+            handleChangeShowHiddenFiles();
             return;
         }
 
@@ -255,43 +319,32 @@ const CRRR = function () {
         }
 
         if (key.upArrow) {
-            if (key.meta) {
-                setSelected(() => 1);
-            } else {
-                moveUp();
-            }
+            handleMoveUp(key.meta);
             return;
         }
         if (key.downArrow) {
-            if (key.meta) {
-                setSelected(() => displayFiles.length - 1);
-            } else {
-                moveDown();
-            }
+            handleMoveDown(key.meta);
             return;
         }
 
         handleInput(input, key);
     });
 
+    const scrollAmount = getScrollAmount(selectedValue, shownFiles.length, screenSize.rows);
+
     return (
-        <Box flexDirection="column" width={size.columns} height={size.rows}>
+        <Box flexDirection="column" width={screenSize.columns} height={screenSize.rows}>
             <Box>
-                <Text>{process.cwd()}</Text>
+                <Text>{getCwd()}</Text>
                 <Newline count={1} />
             </Box>
-            {displayFiles
-                .slice(
-                    getFilesStartSliceIndex(
-                        selected,
-                        displayFiles.length,
-                        size.rows - lineOverhead,
-                    ),
-                    getFilesEndSliceIndex(selected, displayFiles.length, size.rows - lineOverhead),
-                )
-                .map((file) => (
-                    <Box key={file.index}>
-                        {selected === file.index ? <Text>{'>'}</Text> : <Text> </Text>}
+            {shownFiles
+                // TODO remove slicing logic from here
+                // TODO change slicing to <amount of scrolled; amount of scrolled + screen height)
+                .slice(scrollAmount, scrollAmount + screenSize.rows)
+                .map((file, index) => (
+                    <Box key={file.index} width={screenSize.columns}>
+                        <Text>{selectedValue === index + scrollAmount ? '>' : ' '}</Text>
                         <Text {...(file.isDirectory && { backgroundColor: 'blue' })}>
                             {` ${String(file.name)} `}
                         </Text>
@@ -309,19 +362,6 @@ const CRRR = function () {
     );
 };
 
-if (fs.existsSync(outputPath)) {
-    fs.rmSync(outputPath);
-}
-
-const enterAltScreenCommand = '\x1b[?1049h';
-const leaveAltScreenCommand = '\x1b[?1049l';
-process.stdout.write(enterAltScreenCommand);
-process.on('exit', () => {
-    process.stdout.write(leaveAltScreenCommand);
-});
-
-if (process.argv[2] && fs.lstatSync(process.argv[2]).isDirectory()) {
-    process.chdir(process.argv[2]);
-}
+init();
 
 render(<CRRR />);
