@@ -1,21 +1,28 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Box, Key, Newline, render, Text, useApp, useInput } from 'ink';
 import fs from 'fs';
 import process from 'process';
+import Fuse, { IFuseOptions } from 'fuse.js';
+import { exec, execSync, spawn } from 'child_process';
 
-type FileInList = { name: string; isDirectory: boolean; index: number };
+type FileInList = { name: string; isDirectory: boolean };
 
+const editor = process.env?.['EDITOR'] || 'vim';
 const outputPath = '/tmp/crrr';
 const wordSeparators = [' ', '-', '_', '.'];
-const defaultFilesCount = 2;
+const defaultFiles = [
+    { name: '.', isDirectory: true },
+    { name: '..', isDirectory: true },
+];
+const defaultFilesCount = defaultFiles.length;
 const lineOverhead = defaultFilesCount + 4;
+const oldFileNameCache = new Map<string, string>();
 
 function init() {
     if (fs.existsSync(outputPath)) {
         fs.rmSync(outputPath);
     }
 
-    // TODO isDirectory and chdir as custom functions
     if (process.argv[2] && isDirectory(process.argv[2])) {
         changeDirectory(process.argv[2]);
     }
@@ -24,8 +31,8 @@ function init() {
 }
 
 /** System functions */
-function isDirectory(path: string) {
-    return fs.lstatSync(path).isDirectory();
+function isDirectory(fileName: string) {
+    return fs.lstatSync(fileName).isDirectory();
 }
 
 function changeDirectory(path: string) {
@@ -66,18 +73,12 @@ function clipNumber(current: number, min: number, max: number) {
     return Math.min(Math.max(current, min), max);
 }
 
-function sanitizeSearchString(input: string) {
-    const initialInput = input.toLowerCase();
-
-    return wordSeparators.reduce((acc, sep) => acc.replaceAll(sep, ''), initialInput);
-}
-
 function getScrollAmount(selectedValue: number, itemCount: number, itemsPerScreen: number) {
     const halfItemsPerScreen = itemsPerScreen / 2;
 
     const scrollAmount = selectedValue - halfItemsPerScreen;
 
-    return Math.max(scrollAmount, 0); //itemCount - itemsPerScreen
+    return clipNumber(scrollAmount, 0, Math.max(0, itemCount - itemsPerScreen));
 }
 
 function getFiles(path: string = '.'): FileInList[] {
@@ -98,52 +99,52 @@ function cdToCurrentPathAndExit(exit: () => void) {
 }
 
 function cdToSelectedPathAndExit(files: FileInList[], selected: number, exit: () => void) {
-    const selectedFilePath = getSelectedFilePath(files, selected);
+    const selectedFileName = getSelectedFileName(files, selected);
 
-    if (isDirectory(selectedFilePath)) {
-        changeDirectory(selectedFilePath);
+    if (isDirectory(selectedFileName)) {
+        changeDirectory(selectedFileName);
         cdToCurrentPathAndExit(exit);
+    } else {
+        execSync(`vim ${selectedFileName}`, {
+            shell: '/bin/sh',
+            stdio: 'inherit',
+        });
     }
 }
 
-function getSelectedFilePath(files: FileInList[], selected: number) {
+function getSelectedFileName(files: FileInList[], selected: number) {
     return files[selected]?.name as string;
 }
 
+function getSortedFiles(filesToSort: FileInList[], searchString: string) {
+    const sortHandler = (a: FileInList, b: FileInList) => (a.name < b.name ? -1 : 1);
+
+    if (searchString === '') return filesToSort.sort(sortHandler);
+
+    const options: IFuseOptions<FileInList> = {
+        includeScore: true,
+        isCaseSensitive: false,
+        shouldSort: true,
+        threshold: 0.5,
+        keys: ['name'],
+    };
+
+    const fuse = new Fuse(filesToSort, options);
+    return fuse.search(searchString).map((value) => value.item);
+}
+
 function getNewShownFiles(files: FileInList[], searchString: string, showHiddenFiles: boolean) {
-    const sortAndMapFiles = (files: FileInList[], indexOffset: number) =>
-        files
-            .sort((a, b) => (a.name < b.name ? -1 : 1))
-            .map((file, index) => ({
-                ...file,
-                index: index + indexOffset,
-            }));
-
-    const filteredFiles = files
-        .filter((file) =>
-            // TODO fuzzy search
-            sanitizeSearchString(file.name).includes(sanitizeSearchString(searchString)),
-        )
-        .filter((file) => (showHiddenFiles ? true : !file.name.startsWith('.')));
-
-    const directories = sortAndMapFiles(
-        filteredFiles.filter((file) => file.isDirectory),
-        defaultFilesCount,
+    const filteredFiles = files.filter((file) =>
+        showHiddenFiles ? true : !file.name.startsWith('.'),
     );
 
-    const nonDirectories = sortAndMapFiles(
-        filteredFiles.filter((file) => !file.isDirectory),
-        defaultFilesCount + directories.length,
-    );
+    const directories = filteredFiles.filter((file) => file.isDirectory);
+    const nonDirectories = filteredFiles.filter((file) => !file.isDirectory);
 
-    const newDisplayedFiles = [
-        { name: '.', isDirectory: true, index: 0 },
-        { name: '..', isDirectory: true, index: 1 },
-        ...directories,
-        ...nonDirectories,
-    ];
+    const directoriesSorted = getSortedFiles(directories, searchString);
+    const nonDirectoriesSorted = getSortedFiles(nonDirectories, searchString);
 
-    return newDisplayedFiles;
+    return [...defaultFiles, ...directoriesSorted, ...nonDirectoriesSorted];
 }
 
 function getNewSearchString(
@@ -164,8 +165,36 @@ function getNewSearchString(
     return searchString.substring(0, endIndex);
 }
 
-/** Hooks */
+function getSelectedValueOnFilterChange(
+    oldShownFiles: FileInList[],
+    newShownFiles: FileInList[],
+    selectedValue: number,
+) {
+    for (let i = selectedValue; i >= 0; --i) {
+        const fileName = getSelectedFileName(oldShownFiles, i);
 
+        const newSelectedValue = newShownFiles.findIndex((file) => file.name === fileName);
+
+        if (newSelectedValue >= 0) {
+            return newSelectedValue;
+        }
+    }
+
+    return 0;
+}
+
+function getSelectedValueOnDirectoryChange(newShownFiles: FileInList[], currentDir: string) {
+    const oldFileNameCacheHit = oldFileNameCache.get(currentDir);
+
+    if (!oldFileNameCacheHit) return 1;
+
+    const newSelectedValue = newShownFiles.findIndex((val) => val.name === oldFileNameCacheHit);
+
+    if (newSelectedValue < 0) return 1;
+    return newSelectedValue;
+}
+
+/** Hooks */
 function useSelect(initial: number, maxValueInclusive: boolean = false) {
     const [selectedValue, _setSelectedValue] = useState(initial);
 
@@ -218,40 +247,12 @@ const CRRR = function () {
         decreaseSelectedValue,
         increaseSelectedValue,
     } = useSelect(1, false);
+    const [_, setRerender] = useState(0); // force rerender after closing editor
 
     const [screenSize, setScreenSize] = useState({
         columns: process.stdout.columns,
         rows: process.stdout.rows,
     });
-
-    function handleChangeShowHiddenFiles() {
-        const newShowHiddenFiles = !showHiddenFiles;
-        const newShownFiles = getNewShownFiles(filesInCurrenDir, searchString, newShowHiddenFiles);
-
-        setShowHiddenFiles(() => newShowHiddenFiles);
-        setShownFiles(() => newShownFiles);
-        setSelectedValue((current) => current, 0, newShownFiles.length);
-    }
-
-    function handleReturn() {
-        const selectedFilePath = getSelectedFilePath(shownFiles, selectedValue);
-
-        if (selectedValue === 0) {
-            cdToCurrentPathAndExit(exit);
-            return;
-        }
-
-        if (!isDirectory(selectedFilePath)) return;
-
-        changeDirectory(selectedFilePath);
-        const newFilesInCurrentDir = getFiles();
-        const newShownFiles = getNewShownFiles(newFilesInCurrentDir, '', showHiddenFiles);
-
-        setFilesCurrentInDir(() => newFilesInCurrentDir);
-        setShownFiles(() => newShownFiles);
-        setSelectedValue(() => 1, 0, newShownFiles.length);
-        setSearchString(() => '');
-    }
 
     function handleMoveUp(jumpToTop: boolean) {
         if (jumpToTop) {
@@ -271,6 +272,43 @@ const CRRR = function () {
         increaseSelectedValue(shownFiles.length);
     }
 
+    function handleReturn() {
+        const selectedFileName = getSelectedFileName(shownFiles, selectedValue);
+
+        if (selectedValue === 0) {
+            cdToCurrentPathAndExit(exit);
+            return;
+        }
+
+        if (!isDirectory(selectedFileName)) return;
+
+        oldFileNameCache.set(getCwd(), getSelectedFileName(shownFiles, selectedValue));
+        changeDirectory(selectedFileName);
+
+        const newFilesInCurrentDir = getFiles();
+        const newShownFiles = getNewShownFiles(newFilesInCurrentDir, '', showHiddenFiles);
+        const newSelectedValue = getSelectedValueOnDirectoryChange(newShownFiles, getCwd());
+
+        setFilesCurrentInDir(() => newFilesInCurrentDir);
+        setShownFiles(() => newShownFiles);
+        setSelectedValue(() => newSelectedValue, 0, newShownFiles.length);
+        setSearchString(() => '');
+    }
+
+    function handleChangeShowHiddenFiles() {
+        const newShowHiddenFiles = !showHiddenFiles;
+        const newShownFiles = getNewShownFiles(filesInCurrenDir, searchString, newShowHiddenFiles);
+        const newSelectedValue = getSelectedValueOnFilterChange(
+            shownFiles,
+            newShownFiles,
+            selectedValue,
+        );
+
+        setShowHiddenFiles(() => newShowHiddenFiles);
+        setShownFiles(() => newShownFiles);
+        setSelectedValue(() => newSelectedValue, 0, newShownFiles.length);
+    }
+
     function handleInput(input: string, key: Key) {
         const newSearchString = getNewSearchString(
             searchString,
@@ -282,42 +320,25 @@ const CRRR = function () {
 
         setShownFiles(() => newShownFiles);
         setSearchString(() => newSearchString);
-        if (newSearchString === '..') {
+
+        if (newShownFiles.length <= defaultFilesCount) {
+            clipSelectedValueToSafeRange(0, defaultFilesCount);
+        } else if (newSearchString === '..') {
             unsafeSetSelectedValue(() => 1);
         } else {
-            // TODO remember previous selected
-            clipSelectedValueToSafeRange(defaultFilesCount, newShownFiles.length);
+            unsafeSetSelectedValue(() => defaultFilesCount);
         }
     }
 
-    /**
-     * Resize callback
-     */
     useEffect(() => {
-        attachResizeListener(setScreenSize);
+        const clearResizeHandler = attachResizeListener(setScreenSize);
+
+        return () => {
+            clearResizeHandler();
+        };
     }, []);
 
     useInput((input, key) => {
-        if (input === '>') {
-            cdToSelectedPathAndExit(shownFiles, selectedValue, exit);
-            return;
-        }
-
-        if (input === '<') {
-            cdToCurrentPathAndExit(exit);
-            return;
-        }
-
-        if (input === '?') {
-            handleChangeShowHiddenFiles();
-            return;
-        }
-
-        if (key.return) {
-            handleReturn();
-            return;
-        }
-
         if (key.upArrow) {
             handleMoveUp(key.meta);
             return;
@@ -327,23 +348,46 @@ const CRRR = function () {
             return;
         }
 
+        if (input === '>') {
+            cdToSelectedPathAndExit(shownFiles, selectedValue, exit);
+            setRerender((current) => current + 1);
+            return;
+        }
+
+        if (input === '<') {
+            cdToCurrentPathAndExit(exit);
+            return;
+        }
+
+        if (key.return) {
+            handleReturn();
+            return;
+        }
+
+        if (input === '?') {
+            handleChangeShowHiddenFiles();
+            return;
+        }
+
         handleInput(input, key);
     });
 
-    const scrollAmount = getScrollAmount(selectedValue, shownFiles.length, screenSize.rows);
+    const scrollAmount = getScrollAmount(
+        selectedValue,
+        shownFiles.length,
+        screenSize.rows - lineOverhead,
+    );
 
     return (
         <Box flexDirection="column" width={screenSize.columns} height={screenSize.rows}>
             <Box>
-                <Text>{getCwd()}</Text>
+                <Text backgroundColor="magenta">{getCwd()}</Text>
                 <Newline count={1} />
             </Box>
             {shownFiles
-                // TODO remove slicing logic from here
-                // TODO change slicing to <amount of scrolled; amount of scrolled + screen height)
-                .slice(scrollAmount, scrollAmount + screenSize.rows)
+                .slice(scrollAmount, scrollAmount + screenSize.rows - lineOverhead)
                 .map((file, index) => (
-                    <Box key={file.index} width={screenSize.columns}>
+                    <Box key={index + scrollAmount} width={screenSize.columns}>
                         <Text>{selectedValue === index + scrollAmount ? '>' : ' '}</Text>
                         <Text {...(file.isDirectory && { backgroundColor: 'blue' })}>
                             {` ${String(file.name)} `}
@@ -351,7 +395,8 @@ const CRRR = function () {
                     </Box>
                 ))}
 
-            <Newline count={1} />
+            {/* <Newline count={1} /> */}
+            <Box flexGrow={1} />
             <Box>
                 <Text inverse>
                     {'> '}
