@@ -1,8 +1,8 @@
 {
     "name": "crrr",
-    "version": "0.0.0",
+    "version": "0.0.1",
     "license": "MIT",
-    "bin": "dist/cli.js",
+    "bin": "dist/crrr.js",
     "type": "module",
     "engines": {
         "node": ">=16"
@@ -10,7 +10,7 @@
     "scripts": {
         "build": "tsc",
         "dev_old": "tsc --watch",
-        "dev": "yarn build && node dist/cli.js",
+        "dev": "yarn build && node dist/crrr.js",
         "code:fix": "prettier --write --no-editorconfig --log-level debug --config .prettierrc .",
         "test": "prettier --check . && xo && ava"
     },
