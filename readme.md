@@ -1,6 +1,6 @@
 # crrr
 
-Lightning fast interactive directory switcher. Inspired by Primeagen's flow.
+Lightning fast interactive directory switcher.
 
 ## Controls
 
