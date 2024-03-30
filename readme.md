@@ -21,12 +21,12 @@ $ npm install --global crrr
 $ yarn global add crrr
 ```
 
-Add following to shell profile
-
-# TODO
+And add the following to your shell profile (.bashrc, .bash_profile, .zshrc, etc)
 
 ```bash
-c () { crrr; }
+if [ -x "$(command -v init_crrr)" ]; then
+  source init_crrr
+fi
 ```
 
 ## Commands
