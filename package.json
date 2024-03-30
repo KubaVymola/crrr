@@ -1,6 +1,6 @@
 {
     "name": "crrr",
-    "version": "0.0.6",
+    "version": "0.0.7",
     "license": "MIT",
     "bin": {
         "crrr": "dist/crrr.js",
@@ -14,6 +14,20 @@
         "type": "git",
         "url": "https://github.com/KubaVymola/crrr"
     },
+    "keywords": [
+        "cd",
+        "CLI",
+        "tool",
+        "terminal"
+    ],
+    "author": {
+        "email": "kuba.vymola@gmail.com",
+        "name": "Jakub Výmola"
+    },
+    "categories": [
+        "Other"
+    ],
+    "description": "Quickly switch between directories using interactive directory navigator.",
     "scripts": {
         "build": "tsc && cp init_crrr.sh dist/",
         "dev_old": "tsc --watch",
