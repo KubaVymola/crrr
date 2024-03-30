@@ -1,5 +1,7 @@
+#!/bin/sh
+
 c () {
-    node /Users/jakub/Programming/crrr/dist/crrr.js "$1"
+    crrr "$1"
 
     if [ -f "/tmp/crrr" ]; then
         \builtin cd $(cat /tmp/crrr)

@@ -1,14 +1,17 @@
 {
     "name": "crrr",
-    "version": "0.0.1",
+    "version": "0.0.2",
     "license": "MIT",
-    "bin": "dist/crrr.js",
+    "bin": {
+        "crrr": "dist/crrr.js",
+        "init_crrr": "dist/init_crrr.sh"
+    },
     "type": "module",
     "engines": {
         "node": ">=16"
     },
     "scripts": {
-        "build": "tsc",
+        "build": "tsc && cp init_crrr.sh dist/",
         "dev_old": "tsc --watch",
         "dev": "yarn build && node dist/crrr.js",
         "code:fix": "prettier --write --no-editorconfig --log-level debug --config .prettierrc .",

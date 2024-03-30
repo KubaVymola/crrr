@@ -1,9 +1,11 @@
+#!/usr/bin/env node
+
 import React, { useEffect, useState } from 'react';
 import { Box, Key, Newline, render, Text, useApp, useInput } from 'ink';
 import fs from 'fs';
 import process from 'process';
 import Fuse, { IFuseOptions } from 'fuse.js';
-import { exec, execSync, spawn } from 'child_process';
+import { execSync } from 'child_process';
 
 type FileInList = { name: string; isDirectory: boolean };
 
@@ -23,8 +25,10 @@ function init() {
         fs.rmSync(outputPath);
     }
 
-    if (process.argv[2] && isDirectory(process.argv[2])) {
-        changeDirectory(process.argv[2]);
+    const initialPath = process.argv[process.argv.length - 1];
+
+    if (initialPath && isDirectory(initialPath)) {
+        changeDirectory(initialPath);
     }
 
     spawnAlternateTerminalScreen();
@@ -105,7 +109,7 @@ function cdToSelectedPathAndExit(files: FileInList[], selected: number, exit: ()
         changeDirectory(selectedFileName);
         cdToCurrentPathAndExit(exit);
     } else {
-        execSync(`vim ${selectedFileName}`, {
+        execSync(`${editor} ${selectedFileName}`, {
             shell: '/bin/sh',
             stdio: 'inherit',
         });
