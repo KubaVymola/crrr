@@ -18,7 +18,7 @@ const defaultFiles = [
 ];
 const defaultFilesCount = defaultFiles.length;
 const lineOverhead = defaultFilesCount + 4;
-const oldFileNameCache = new Map<string, string>();
+const selectedFileNamesCache = new Map<string, string>();
 
 function init() {
     if (fs.existsSync(outputPath)) {
@@ -188,7 +188,7 @@ function getSelectedValueOnFilterChange(
 }
 
 function getSelectedValueOnDirectoryChange(newShownFiles: FileInList[], currentDir: string) {
-    const oldFileNameCacheHit = oldFileNameCache.get(currentDir);
+    const oldFileNameCacheHit = selectedFileNamesCache.get(currentDir);
 
     if (!oldFileNameCacheHit) return 1;
 
@@ -286,7 +286,7 @@ const CRRR = function () {
 
         if (!isDirectory(selectedFileName)) return;
 
-        oldFileNameCache.set(getCwd(), getSelectedFileName(shownFiles, selectedValue));
+        selectedFileNamesCache.set(getCwd(), getSelectedFileName(shownFiles, selectedValue));
         changeDirectory(selectedFileName);
 
         const newFilesInCurrentDir = getFiles();
@@ -311,6 +311,15 @@ const CRRR = function () {
         setShowHiddenFiles(() => newShowHiddenFiles);
         setShownFiles(() => newShownFiles);
         setSelectedValue(() => newSelectedValue, 0, newShownFiles.length);
+    }
+
+    function handleResetInternalState() {
+        const newShownFiles = getNewShownFiles(filesInCurrenDir, '', showHiddenFiles);
+
+        setShownFiles(() => newShownFiles);
+        setSelectedValue(() => 1, 0, newShownFiles.length);
+        setSearchString(() => '');
+        selectedFileNamesCache.clear();
     }
 
     function handleInput(input: string, key: Key) {
@@ -370,6 +379,11 @@ const CRRR = function () {
 
         if (input === '?') {
             handleChangeShowHiddenFiles();
+            return;
+        }
+
+        if (input === '/') {
+            handleResetInternalState();
             return;
         }
 

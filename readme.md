@@ -4,10 +4,15 @@ Lightning fast interactive directory switcher. Inspired by Primeagen's flow.
 
 ## Controls
 
-Arrow keys to move the cursor up and down. `<` to cd into current directory and exit. `>` to cd into
-directory selected by the cursor and exit. `Return` to cd into directory selected by the cursor and
-continue execution. `?` to toggle visibility of hidden files. Start entering any text to search in
-the contents of the current directory.
+Arrow keys to move the cursor up and down.
+
+`<` to cd into current directory and exit. `>` to cd into
+directory selected by the cursor and exit, or open selected file in `$EDITOR` (default is `vim`) if
+the selected file is not a directory. `Return` to cd into directory selected by the cursor and
+continue execution. `?` to toggle visibility of hidden files. `/` to reset internal state of the
+app.
+
+Start entering any text to search in the contents of the current directory.
 
 ## Install
 
