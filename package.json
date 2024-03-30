@@ -1,6 +1,6 @@
 {
     "name": "crrr",
-    "version": "0.0.3",
+    "version": "0.0.4",
     "license": "MIT",
     "bin": {
         "crrr": "dist/crrr.js",
@@ -9,6 +9,10 @@
     "type": "module",
     "engines": {
         "node": ">=16"
+    },
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/KubaVymola/crrr"
     },
     "scripts": {
         "build": "tsc && cp init_crrr.sh dist/",
