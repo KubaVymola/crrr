@@ -16,8 +16,8 @@ const defaultFiles = [
     { name: '.', isDirectory: true },
     { name: '..', isDirectory: true },
 ];
-const defaultFilesCount = defaultFiles.length;
-const lineOverhead = defaultFilesCount + 4;
+const minimalFilesCount = defaultFiles.length;
+const lineOverhead = minimalFilesCount + 2;
 const selectedFileNamesCache = new Map<string, string>();
 
 function init() {
@@ -74,22 +74,29 @@ function spawnAlternateTerminalScreen() {
 
 /** Utility functions */
 function clipNumber(current: number, min: number, max: number) {
-    return Math.min(Math.max(current, min), max);
+    return clipNumberBottom(clipNumberTop(current, max), min);
+}
+
+function clipNumberBottom(current: number, min: number) {
+    return Math.max(current, min);
+}
+
+function clipNumberTop(current: number, max: number) {
+    return Math.min(current, max);
 }
 
 function getScrollAmount(selectedValue: number, itemCount: number, itemsPerScreen: number) {
-    const halfItemsPerScreen = itemsPerScreen / 2;
+    const halfItemsPerScreen = Math.floor(itemsPerScreen / 2);
 
     const scrollAmount = selectedValue - halfItemsPerScreen;
 
-    return clipNumber(scrollAmount, 0, Math.max(0, itemCount - itemsPerScreen));
+    return clipNumber(scrollAmount, 0, clipNumberBottom(0, itemCount - itemsPerScreen));
 }
 
 function getFiles(path: string = '.'): FileInList[] {
-    return fs.readdirSync(path).map((file, index) => ({
+    return fs.readdirSync(path).map((file) => ({
         name: file,
         isDirectory: isDirectory(file),
-        index: index,
     }));
 }
 
@@ -198,6 +205,16 @@ function getSelectedValueOnDirectoryChange(newShownFiles: FileInList[], currentD
     return newSelectedValue;
 }
 
+const getBackgroundColor = (isDir: boolean, isSelected: boolean) => {
+    if (isDir) {
+        if (isSelected) return { backgroundColor: 'magenta' };
+        if (!isSelected) return { backgroundColor: 'blue' };
+    }
+
+    if (isSelected) return { backgroundColor: 'grey' };
+    return {};
+};
+
 /** Hooks */
 function useSelect(initial: number, maxValueInclusive: boolean = false) {
     const [selectedValue, _setSelectedValue] = useState(initial);
@@ -247,7 +264,6 @@ const CRRR = function () {
         selectedValue,
         setSelectedValue,
         unsafeSetSelectedValue,
-        clipSelectedValueToSafeRange,
         decreaseSelectedValue,
         increaseSelectedValue,
     } = useSelect(1, false);
@@ -258,18 +274,18 @@ const CRRR = function () {
         rows: process.stdout.rows,
     });
 
-    function handleMoveUp(jumpToTop: boolean) {
-        if (jumpToTop) {
-            unsafeSetSelectedValue(() => 1);
-            return;
+    function handleMoveUp(isLargeJump: boolean) {
+        if (isLargeJump) {
+            if (selectedValue <= 1) decreaseSelectedValue(0);
+            else setSelectedValue((current) => current - 15, 1, shownFiles.length);
+        } else {
+            decreaseSelectedValue(0);
         }
-
-        decreaseSelectedValue(0);
     }
 
-    function handleMoveDown(jumpToBottom: boolean) {
-        if (jumpToBottom) {
-            unsafeSetSelectedValue(() => shownFiles.length - 1);
+    function handleMoveDown(isLargeJump: boolean) {
+        if (isLargeJump) {
+            setSelectedValue((current) => current + 15, 0, shownFiles.length);
             return;
         }
 
@@ -334,13 +350,16 @@ const CRRR = function () {
         setShownFiles(() => newShownFiles);
         setSearchString(() => newSearchString);
 
-        if (newShownFiles.length <= defaultFilesCount) {
-            clipSelectedValueToSafeRange(0, defaultFilesCount);
-        } else if (newSearchString === '..') {
-            unsafeSetSelectedValue(() => 1);
-        } else {
-            unsafeSetSelectedValue(() => defaultFilesCount);
+        if (newSearchString === '.') {
+            unsafeSetSelectedValue(() => 0);
+            return;
         }
+        if (newSearchString === '..') {
+            unsafeSetSelectedValue(() => 1);
+            return;
+        }
+
+        setSelectedValue(() => minimalFilesCount, 0, newShownFiles.length);
     }
 
     useEffect(() => {
@@ -407,13 +426,17 @@ const CRRR = function () {
                 .map((file, index) => (
                     <Box key={index + scrollAmount} width={screenSize.columns}>
                         <Text>{selectedValue === index + scrollAmount ? '>' : ' '}</Text>
-                        <Text {...(file.isDirectory && { backgroundColor: 'blue' })}>
+                        <Text
+                            {...getBackgroundColor(
+                                file.isDirectory,
+                                selectedValue === index + scrollAmount,
+                            )}
+                        >
                             {` ${String(file.name)} `}
                         </Text>
                     </Box>
                 ))}
 
-            {/* <Newline count={1} /> */}
             <Box flexGrow={1} />
             <Box>
                 <Text inverse>
