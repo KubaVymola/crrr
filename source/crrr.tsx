@@ -207,11 +207,11 @@ function getSelectedValueOnDirectoryChange(newShownFiles: FileInList[], currentD
 
 const getBackgroundColor = (isDir: boolean, isSelected: boolean) => {
     if (isDir) {
-        if (isSelected) return { backgroundColor: 'magenta' };
-        if (!isSelected) return { backgroundColor: 'blue' };
+        if (isSelected) return { backgroundColor: '#fe640b' }; // peach
+        if (!isSelected) return { backgroundColor: '#1e66f5' }; // blue
     }
 
-    if (isSelected) return { backgroundColor: 'grey' };
+    if (isSelected) return { backgroundColor: '#dd7878' }; // flamingo
     return {};
 };
 
@@ -253,7 +253,7 @@ function useSelect(initial: number, maxValueInclusive: boolean = false) {
     };
 }
 
-const CRRR = function () {
+const CRRR = function() {
     const { exit } = useApp();
 
     const [showHiddenFiles, setShowHiddenFiles] = useState(false);
