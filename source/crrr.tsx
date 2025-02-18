@@ -418,7 +418,7 @@ const CRRR = function() {
     return (
         <Box flexDirection="column" width={screenSize.columns} height={screenSize.rows}>
             <Box>
-                <Text backgroundColor="magenta">{getCwd()}</Text>
+                <Text backgroundColor="#1e66f5">{getCwd()}</Text>
                 <Newline count={1} />
             </Box>
             {shownFiles

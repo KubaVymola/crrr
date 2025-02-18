@@ -1,6 +1,6 @@
 {
     "name": "crrr",
-    "version": "0.0.10",
+    "version": "0.0.11",
     "license": "MIT",
     "bin": {
         "crrr": "dist/crrr.js",
